@@ -1,0 +1,1116 @@
+---
+title: 'R 3: Statistical Analysis and Visualization'
+author: "Chayce Baldwin"
+date: "August 29, 2018"
+output: 
+  html_document:
+    theme: cerulean
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: TRUE
+---
+
+```{r loading packages, include=FALSE}
+#install.packages("Hmisc", "xtable", "PerformanceAnalytics", "corrplot", "haven")
+#install.packages("GPArotation")
+#install.packages("car")
+#install.packages("lmtest")
+#install.packages("sandwich")
+#install.packages("broman")
+library(Hmisc)
+library(psych) # For many psych-related functions
+library(GPArotation) # for omega function in psych package
+library(tidyverse)
+library(haven) # for reading in data
+library(magrittr) # for pipes
+
+```
+
+```{r custom functions, include=FALSE}
+## alphatize and alphatize_full() functions created by Juan Ospina at Stanford University
+alphatize <- function(data, vector){
+  temp <- 
+    data %>% 
+    select(!!!vector) %>% # note that variables in vector must be pre-quoted using quos() function
+    na.omit() %>% 
+    psych::alpha() 
+  
+  temp$total$raw_alpha %>% broman::myround(2)
+  # Example: 
+  # var_list <- quos(disp, wt, cyl)
+  # new_alpha <- alphatize(mtcars, var_list)
+}
+
+alphatize_full <- function(data, vector){
+    data %>% 
+    select(!!!vector) %>% # note that variables in vector must be pre-quoted using quos() function
+    na.omit() %>% 
+    psych::alpha() 
+}
+
+#Created by Chayce Baldwin at BYU
+omegatize_full <- function(data, vector, nfactors = nfactors){
+    data %>% 
+    select(!!!vector) %>% # note that variables in vector must be pre-quoted using quos() function
+    na.omit() %>% 
+    psych::omega(nfactors= nfactors,fm="minres",n.iter=1,p=.05,poly=FALSE,key=NULL, #key = TRUE when there are neg correlated items
+    flip=TRUE) # auto flipped to have positive correlations on general factor
+}
+
+#Created by Chayce Baldwin at BYU
+factorize <- function(data, vector, factors = 1, rotation = "varimax"){
+
+  library(psych)
+  fact <- data %>% select(!!!vector)
+  
+   if(factors >= 2){
+     fit <- factanal(na.omit(fact),
+        factors = factors, # how many factors to calculate
+        rotation = rotation)
+     print(fit, digits=3, cutoff=.3, sort=TRUE)
+   } else {
+      factanal(na.omit(fact),
+        factors = factors, # how many factors to calculate
+        rotation = "none")
+     #print(fit, digits=2, cutoff=.3, sort=TRUE)
+    }
+}
+
+##For this function: n.obs() can be specified for the scree plot/parallel analysis. Screeplot uses ml to compute factors. Screeplot/parallel analysis results show up in factor analysis output.
+mega.factorize <- function(data, vector, factors = 1, rotation = "varimax", n.obs = NULL){
+
+  library(corrplot)
+  library(psych)
+  fact <- data %>% select(!!!vector)
+  
+  corr_table <- round(cor(fact, use = "pairwise.complete.obs"), digits = 3) # you need to determine how NAs should be treated. SPSS uses deleting NAs pairwise as a default, so R should do the same in order to compare the results
+
+  corrplot(corr_table, method = "circle", type = "upper", sig.level = 0.05, order = "hclust") # plot matrix
+
+  ###fix screeplot to have more or less factors
+  
+   if(factors >= 2){
+     scree_plot <- fa.parallel(corr_table, n.obs = n.obs, fm = "ml", fa = "both", main = "Scree Plot"); scree_plot
+     fit <- factanal(na.omit(fact),
+        factors = factors, # how many factors to calculate
+        rotation = rotation)
+     print(fit, digits=3, cutoff=.3, sort=TRUE)
+      # plot factor 1 by factor 2 
+        load <- fit$loadings[,1:2] 
+        plot(load,type="n") # set up plot 
+        text(load,labels=names(data),cex=.7) # add variable names)
+   } else {
+     scree_plot <- fa.parallel(corr_table, fm = "ml", fa = "both", main = "Scree Plot"); scree_plot
+     factanal(na.omit(fact),
+        factors = factors, # how many factors to calculate
+        rotation = "none")
+    }
+}
+
+#This function was created bv bloggers at http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software. Originally called "flattenCorrMatrix".
+
+corr.columns <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut])
+}
+
+
+#This function was created bv bloggers at http://www.sthda.com/english/wiki/elegant-correlation-table-using-xtable-r-package.
+
+# x is a matrix containing the data
+# method : correlation method. "pearson"" or "spearman"" is supported
+# removeTriangle : remove upper or lower triangle
+# results :  if "html" or "latex"
+  # the results will be displayed in html or latex format
+corstars <-function(x, method=c("pearson", "spearman"), removeTriangle=c("upper", "lower"),
+                     result=c("none", "html", "latex")){
+    #Compute correlation matrix
+    require(Hmisc)
+    x <- as.matrix(x)
+    correlation_matrix<-rcorr(x, type=method[1])
+    R <- correlation_matrix$r # Matrix of correlation coeficients
+    p <- correlation_matrix$P # Matrix of p-value 
+    
+    ## Define notions for significance levels; spacing is important.
+    mystars <- ifelse(p < .001, "***", ifelse(p < .01, "** ", ifelse(p < .05, "*  ", "    ")))
+    
+    ## trunctuate the correlation matrix to two decimal
+    R <- format(round(cbind(rep(-1.11, ncol(x)), R), 2))[,-1]
+    
+    ## build a new matrix that includes the correlations with their apropriate stars
+    Rnew <- matrix(paste(R, mystars, sep=""), ncol=ncol(x))
+    diag(Rnew) <- paste(diag(R), " ", sep="")
+    rownames(Rnew) <- colnames(x)
+    colnames(Rnew) <- paste(colnames(x), "", sep="")
+    
+    ## remove upper triangle of correlation matrix
+    if(removeTriangle[1]=="upper"){
+      Rnew <- as.matrix(Rnew)
+      Rnew[upper.tri(Rnew, diag = TRUE)] <- ""
+      Rnew <- as.data.frame(Rnew)
+    }
+    
+    ## remove lower triangle of correlation matrix
+    else if(removeTriangle[1]=="lower"){
+      Rnew <- as.matrix(Rnew)
+      Rnew[lower.tri(Rnew, diag = TRUE)] <- ""
+      Rnew <- as.data.frame(Rnew)
+    }
+    
+    ## remove last column and return the correlation matrix
+    Rnew <- cbind(Rnew[1:length(Rnew)-1])
+    if (result[1]=="none") return(Rnew)
+    else{
+      if(result[1]=="html") print(xtable(Rnew), type="html")
+      else print(xtable(Rnew), type="latex") 
+    }
+} 
+```
+
+
+# Before we get started
+
+*Having trouble remembering what exactly an R Markdown is? Want some more resources for learning R?*
+
+*   Review what an R Markdown is [here](#markdown).
+*   Explore further resources for learning R [here](#resources).
+
+
+## Recap: What we learned in the previous tutorial
+
+In the last tutorial, we learned a few things about R packages, as well as data manipulation within R:
+
+*   How to install and load packages
+*   The data manipulation grammar of *dplyr*
+*   How to integrate the tools in *dplyr* for tidy data manipulation
+*   Solutions to common data manipulation problems
+*   Ideas for other data manipulation problems we may come across here
+
+## Overview: What we'll learn here
+
+What we'll look at here:
+
+1. **Preliminary analyses**
+- [Reliability](#reliability)
+      - Cronbach's Alpha
+      - Omega
+   - Factor analysis and parallel analysis
+   - Testing for heteroskedasticity (vif)
+   - Tests for transforming/data normality
+2. **Group mean/count comparison analyses**
+  + [Contingency tables, Chi2 tests](#chi2)
+  + Student's t-tests
+    + [paired t-test](#pairedt)
+    + [independent t-test](#independentt)
+  + [ANOVA](#anova)
+3. **Multivariate relationship analyses**
+  + Linear regression
+    + [Multivariate regression](#multireg)
+    + [Additive and interactive models](#addinteract)
+    + OLS with robust standard errors 
+  + [Correlation and covariance](#corr)
+  + [visualizing correlations](#corr)
+4. **Visualization**
+  + Building *ggplots*
+  + Data exploration with *ggplot*
+  + interactive and conditional *ggplots*
+  + Interactive bar graphs using *ggplot*
+  + Making plots presentable
+  + common *ggplot* aesthetics and geoms
+  + other plots
+  
+Throughout this workshop, I will often include multiple ways of writing the same code. Sometimes, this will be comparing base R code to code written using *dplyr* tools, which we learned in Workshop 2. Sometimes, they represent shortcuts. Notably, there are 3 ways of calling a data frame that I use in this workshop:
+
+1. Using `attach()` to attach a data frame to the workspace
+2. Using `data$var` to call specific variables, or calling data within functions (i.e. `data = d`)
+3. Using 'pipes'-- %>%, %$%, and %<>%--to call data for a string of functions
+
+Throughout this workshop, take note of differences and choose which ways work best for you!
+
+
+***********************
+
+# Part I: Analyzing our data
+
+
+In past tutorials, we have gone over how to get your data into R, how to take a preliminary look at your data, and how to manipulate your data to prepare it for analysis. Now, we can ask the questions we have really come for and begin looking for answers. 
+
+
+Let's start by reading in our data:
+
+```{r load_d}
+# write csv
+write_csv(mtcars, "mtcars.csv")
+
+# load a csv file
+d <- read_csv("mtcars.csv")
+d1 <- read_csv("foreign.csv")
+d <- cbind(d, d1)
+
+d$am[d$am==1] = 2
+d$am[d$am==0] = 1
+d$am[d$am==2] = 0
+
+```
+
+## Preliminary Analyses {#reliability}
+
+Before we do any of our main analyses, we may want to do some preliminary analyses--that is, assess the properties of our data and if they fulfill the assumptions of the tests we will run later.
+
+**1. Reliability: Alpha and Omega**
+
+We may want to compute Cronbach's alpha and omega reliability coefficients for scales or indices we are using. Normally, these functions in the *psych* package require that you input matrices or data frames, but we have created custom functions that allow you to use `alpha()` and `omega()` from the *psych* package using **vectors**. 
+
+**Vectors**, as you may have seen in the last workshop, are grouped lists of variables. When you want to operate on a group of variables together, such as when computing composite variables, reliability coefficients, or factor analyses, they can be useful to have. Here, we create a random vector for demonstrative purposes.
+
+We've made two different functions for computing alpha:
+
+1. One that returns only the overall alpha of the items (`alphatize()`)
+2. One that provides a full output of alpha-related information (`alphatize_full()`)
+
+
+```{r}
+library(psych)
+library(broman)
+
+vector <- quos(mpg, wt, hp, qsec, drat, disp)
+
+vector_alpha <- d %>% alphatize(vector)
+
+d %>% alphatize_full(vector)
+
+d %>% omegatize_full(vector, nfactors = 3)
+
+```
+
+We have also created two functions for factor analysis, using `factanal()` from the *psych* package. Whereas `factorize` returns only a factor analysis output, `mega.factorize()` returns correlations between variables, a full output, a screeplot with a parallel analysis, and a graph plotting two factors against each other(if you specify two factors).
+
+If you specify only a vector, the function defaults to one factor. Number of factors and rotation can also be specified. Default rotation is varimax. Check out the functions and learn more about them in the "custom functions" chunk of this Markdown.
+
+```{r}
+d %>% factorize(vector, factors = 2)
+d %>% mega.factorize(vector, factors = 2, rotation = "promax")
+
+```
+
+
+**2. Assumptions of OLS regression**
+
+If we want to test the assumption of homoskedasticity, we will need to compute variance inflation factors (VIFs). Paul Allison (2012) provides a nice description of what these are:
+
+>`It's called the variance inflation factor because it estimates how much the variance of a coefficient is "inflated" because of linear dependence with other predictors. Thus, a VIF of 1.8 tells us that the variance (the square of the standard error) of a particular coefficient is 80% larger than it would be if that predictor was completely uncorrelated with all the other predictors...
+>Personally, I [Allison] tend to get concerned when a VIF is greater than 2.50, which corresponds to an R2 of .60 with the other variables.
+
+In my own analyses, I generally use a cutoff of about 2.5. That is, if variables have a VIF of greater than 2.5, I either take them out of the analysis or run the analysis using regression with robust standard errors. To do a regression with robust standard errors to help correct for heteroskedasticity, check out the [code](#robust) later in this Markdown.
+
+```{r}
+library(car)
+#heteroskedasticity
+# distribution
+# other assumptions?
+# other prelim analyses?
+model1 <- lm(mpg ~ wt + hp, data = d)
+car::vif(model1)
+
+model2 <- lm(mpg ~ hp + qsec, data = d)
+car::vif(model2)
+
+```
+These have the same VIF because they only depend on each other, they don't have any other variables to base their scores off of. 
+
+
+
+Now we'll plot the data to see the relationship between transmission and mpg:
+
+```{r plot_col_on_rtwl, fig.width=7, fig.height=6}
+boxplot(mpg ~ am, col='brown', 
+        pch=23, 
+        xlab = "Transmission", ylab = "MPG",
+        main='Relationship between mpg and am',
+        data=d)
+```
+
+ What if we wanted to see if the type of transmission a car has affects its gas mileage?
+
+
+## Performing t-tests in R
+
+The *t-test* allows us to test a **null hypothesis ($H_0$)** about population means. For instance, if we are interested in whether two populations are different, we can test the $H_0$ that the mean of population 1 is equal to the mean of population 2.
+
+In this case, it is important to note that the 2 types of cars are *independent* of each other. That is, cars with automatic trnasmission are different form those with manual transmission. In contrast, in order to be dependent, it would have to be the same cars with both automatic transmission and manual transmission. That could be the case, for example, if the car models were measured in years before and after they changed transmissions (presumably from manual to automatic). 
+
+To test our $H_0$, we'll compute a "standardized difference", or **t statistic**, between the *sample mean* mpg of cars with `am`=0 and the sample mean mpg of cars with `am`=1. Once we compute this t, we can decide if it's "large" (e.g., -2 > t > 2) to determine if we can reject our $H_0$.
+
+### Short-form data for t.test()
+
+
+We'll make 2 variables by selecting **subsets** of the mpg data, *conditional* on whether or not the cars have automatic transmission. In R, the *brackets* (`[ ]`) let us select rows of a variable conditional on another variable. Here, we'll select the rows of `mpg` where `am` is equal to 0, or 1. We can also use *dplyr* tools to do the same thing. Notice here, however, that it takes slightly more code to do it this way.
+
+```{r subsetCOL_d0}
+##selecting rows using var1[filter_var]
+mpg.man <- d$mpg[d$am==0]
+mpg.am <- d$mpg[d$am==1]
+
+#selecting rows using dplyr
+mpg.man <- d %>% filter(am==0) %>% select(mpg)
+mpg.am <- d %>% filter(am==1) %>% select(mpg) 
+```
+
+Now that the `mpg` data is grouped into variables based on `am` status, we can explore these variables quickly:
+
+```{r explore_subsetCOL_d0}
+str(mpg.am)
+str(mpg.man)
+```
+
+Here, we see that there are 19 cars with `am`=0, and 13 cars with `am`=1.
+
+
+### Running an **Independent Samples t-test** {#independentt}
+
+We are interested in whether there is a difference in gas mileage for cars with automatic or manual transmission.
+
+Now that we have our data in the correct format, we can run a t-test testing the H0 that mean(mpg.am) = mean(mpg.man). Right now, we'll just assume that the two variances are equal.
+
+```{r ttest_subsetmpg_d, eval=FALSE, include=FALSE}
+model1 <- t.test(mpg.am, mpg.man, var.equal = TRUE, rm.na = T)
+model1
+
+```
+
+### Testing for equal variance
+
+Looking good! However, we automatically assumed that the variances were equal between the 2 types of transmissions. We can use the **standard deviation** function `sd()` to approximate the variance for these 2 groups:
+
+```{r sd_subsetCOL_d, eval=FALSE, include=FALSE}
+c(sd0 = sd(mpg.am), sd1 = sd(mpg.man))
+```
+
+These numbers are pretty different; however, the two groups had different numbers of cars. We can use the `var.test()` function to directly test the H0 that the variance between two samples is equal.
+
+```{r vartest_subsetCOL_d0, eval=FALSE, include=FALSE}
+var.test(mpg.am, mpg.man)
+```
+
+Here, though marginally significant, we cannot reject the null because the two variances are not significantly different from each other at the p < .05 level.
+
+### Running a **Paired t-test** {#pairedt}
+
+Suppose the mpg measurements for `am` = 0 (manual) and `am` = 1 (automatic) had been taken from the *same* cars, say, in comparing earlier versus later models. That is, the mpg when `am` = 0 is from *before* the transmission of a model was changed to be automatic; the mpg when `am` = 1 is from *after* the transmission was changed. Now, the samples would NOT be independent. Instead, the mpg when `am` = 1 for car A is *dependent* on mpg when `am` = 0. In this case, the two samples are *paired*.
+
+As an example, we have a study in which, for each car, mpg is measured BEFORE the transmission was switched and the year AFTER the transmission was switched, with all cars now being automatic:
+
+```{r load_d0}
+d0 = read_csv('mtcars.paired.csv')
+str(d0)
+
+```
+
+Since the two groups are **paired** (i.e., NOT independent), we must specify that in the `t.test()` by saying "`paired=TRUE`". Otherwise, our results will be incorrect.
+
+```{r ttest_d0}
+test1 = d0 %$% t.test(manual, auto, #Can also be written using d0$manual and d0$auto
+               var.equal = TRUE, 
+               paired = TRUE)
+test1
+```
+
+In the second line of the output, we can see the t-score and p-value for the test: it looks as though gas mileage changed significantly when cars switched from being manual to automatic. 
+Additionally, on the last line of the output, we can see that the mean difference between groups is 3.26; this means that for each car, gas mileage was on average 3.26 miles/gallon better when the car had manual transmission.
+
+
+If we made a mistake and forgot to specify "`paired=TRUE`", R would default to `paired=FALSE`, and our output would be incorrect:
+
+```{r ttest_incorr_d0}
+##Notice how this 
+test2 = d0 %$% t.test(manual, auto, 
+               var.equal = TRUE)
+test2
+```
+
+Here, the difference is still significant, but very different. So it's important you tell R that the groups are paired when the two samples are dependent on one another!
+
+
+## Regression: simple and multiple
+
+Now let's re-attach the mtcars dataframe and examine the relationship between car weight (`wt`; 1000 lbs) and gas mileage (`mpg`) using the `lm()` function. This is an example of "simple" regression, as there is only a single *independent* or *predictor* variable (which is what appears on the right side of the ~ in the function). To do this, R uses the format `lm(Y ~ X, data = data)`, or, in other words, `lm(outcome ~ predictor, data = data)`.
+
+```{r lm}
+attach(d)
+
+model1 <- lm(mpg ~ wt)
+summary(model1)
+```
+
+Here, the output suggests that there is a significant relationship between car weight and gas mileage, such that gas mileage decreases by 5.34 miles/gallon for every 1000 lbs heavier a car is. We can see this by looking under the "Coefficients" header for `wt`: estimate = -5.34, t = -9.66, p < 0.001.
+
+We can also plot the residuals to get a better idea of possible outliers, etc.
+```{r plot_lm, fig.width=7, fig.height=6}
+plot(model1)
+```
+
+### Removing bivariate outliers
+
+No need to feel overwhelmed by these plots; just try to notice which observations are not like the others. These last diagnostic plots suggest that observations **8**, **17**, and **20** are outliers. What would the plot look like if these outliers were removed? To do this, we can give R a *negative vector* by typing `-c(8, 17, 20)`, and then we can tell R to take all the values *minus* the values in the vector from the variable. By saying `wt[-c(8, 17, 20)]` we're telling R to use all the rows in `wt` with the exception of 8, 17, and 20.
+
+```{r plot_no_outliers, fig.width=7, fig.height=6}
+plot(wt[-c(8,17,20)], mpg[-c(8,17,20)],
+     pch = 23,
+     bg = 'red',
+     main = 'Gas Mileage vs. Car Weight (no outliers)')
+
+lines(lowess(wt[-c(8,17,20)], mpg[-c(8,17,20)]),
+      lty = 2,
+      col='red')
+```
+
+```{r lm_no_outliers}
+mod.no.out <- lm(mpg[-c(8, 17, 20)] ~ wt[-c(8, 17, 20)])
+summary(mod.no.out)
+
+```
+
+Here we see that when those outliers were removed, the effect of car weight on gas mileage increased slightly.
+
+### Multivariate analysis {#multireg}
+
+Sometimes we want to know how **multiple** variables influence our DV. Using `lm()`, we can provide multiple IVs using the format `lm(Y ~ X1 + X2 + X3)`. Basically, this model will tell us the *unique* variance in Y that is explained by each IV, *when controlling for the other variables*. 
+
+Now, one might ask if the weight of a car still has much of an impact when controlling for other variables, such as horsepower. This is an example of multivariate analysis. To examine this question, we can enter multiple predictors into the `lm()` function using plus signs in between each variable:
+
+```{r multiple_regression}
+model <- lm(mpg ~ wt + hp + qsec + cyl)
+summary(model)
+```
+
+Here we can see that car weight affects gas mileage even when controlling for other factors. However, controlling for other factors, none of the other variables have a significant effect.
+
+Before we move on to the next section, let's detach the dataframe we've been using:
+
+```{r}
+detach(d)
+```
+
+
+## Additive & Interactive Models {#addinteract}
+
+For the next section, lets load in a new dataset:
+
+```{r}
+d2 <- read_csv('mtcars.interact.csv')
+
+# here we label the levels of some of the variables we will be looking at later.
+d2$foreign <- ordered(d2$foreign, 
+                      levels = c(0, 1),
+                      labels = c("U.S.-made", "Foreign-made"))
+d2$am <- ordered(d2$am, 
+                 levels = c(0, 1),
+                 labels = c("Automatic", "Manual"))
+```
+
+
+Earlier, we saw that gas mileage is different depending on whether a car has automatic transmission or not. Does it also depend on whether the car was made in the U.S.? To get a general idea, we can run a regression model looking at `foreign` predicting `mpg`. Why don't you try it out:
+
+1. Below, run a regression model looking at the effect of `foreign` on `mpg`.
+
+```{r}
+# Hint: Remember, you'll need two functions: lm() and summary().
+
+```
+
+This output suggests that `foreign` does indeed have a significant effect on `mpg`, such that foreign-made cars have better mpg.
+
+Now, we might be interested in how the effect of transmission on mpg is related to whether or not a car is U.S.-made. In an **additive model** (e.g., `mpg ~ am + foreign`), the effect of transmission on mpg is assumed to be the same for both U.S.-made and foreign-made cars.  
+
+In contrast, in an **interactive model** (e.g., `mpg ~ am * foreign`) the effect of transmission on mpg is **NOT** assumed to be the same for both U.S-made and foreign-made cars. For example, the influence of having a manual transmission on mpg might be different for U.S-made and foreign-made cars.
+
+To run an additive model and assess the unique contribution of `am` and `foreign` in explaining `mpg`, we simply add both variables to the right side of the equation, linked with a plus sign (+). 
+
+### Additive model 
+
+```{r lm_add_d0}
+mod.add <- lm(mpg ~ am + foreign, data = d2)
+summary(mod.add)
+```
+
+Here, we see that both transmission type and U.S.-make each have a unique influence on gas mileage, such that cars with manual transmission and cars that are foreign-made have better gas mileage.
+
+Now let's look to see if `am` and `foreign` interact to influence gas mileage. For example, we might ask, "Does the effect of transmission on gas mileage depend on whether or not the car was made in the U.S.?" 
+
+We can run an interactive model by adding a asterisk (*) between variables to denote an interactive (multiplicative) model rather than an additive one.
+
+### Interactive model
+
+```{r lm_inter_d0}
+mod.inter <- lm(mpg ~ am * foreign, data = d2)
+summary(mod.inter)
+```
+
+Woah, what happened? the main effects of `am` and `foreign` are no longer significant, but the interaction between them is (designated by "am:foreign"). It seems that rather than influencing `mpg` independently, their effect is dependent on each other. Let's get a better idea of what went on here. We can use the `interaction.plot()` function to plot `mpg` by `am` and `foreign` category:
+
+```{r plot_rtwl_income_col_interaction, fig.width=7, fig.height=6}
+with(d2, interaction.plot(foreign, am, mpg, 
+                          fun = mean,
+                          xlab="foreign",
+                          ylab='mpg'))
+```
+
+By looking at this plot, we can see that for both cars that have automatic transmission and those that have manual transmission, foreign-made cars seem to get better gas mileage. However, though manual transmission performs better than automatic across the board, it seems to be *particualrly* good for gas mileage in foreign-made cars. In this way, the effect of transmission type on mpg depends on whether a car is U.S.- or foreign-made.
+
+### ANOVA {#anova}
+
+If we wanted to look at an anova output, we would use the same format as above to create the model: `lm(Y ~ Factor1*Factor2, data = d)`. Alternatively, however, we assess the output with the `anova()` command, rather than `summary()`. We can also do `lm(Y ~ Factor1 + Factor2 + Factor1:Factor2)`. Below, we provide code for computing an ANOVA using base R, as well as how you might do it using tools from *dplyr*
+
+```{r}
+# Base R
+model1 <- lm(mpg ~ am * foreign, data = d2)
+anova(model1)
+
+#dplyr
+d2 %$% 
+  lm(mpg ~ am * foreign) %>% anova
+```
+
+### Regression with robust standard errors {#robust}
+
+If a model has heteroskedastic standard errors (i.e. they are not evenly distributed around the regression line), you may need to conduct regression with robust standard errors. Let's look at the example we used earlier to assess VIFs.
+
+```{r}
+model2 <- lm(mpg ~ hp + qsec, data = d)
+car::vif(model2)
+```
+
+
+If we wanted to conduct a regression with standard errors, we would use the following code, using the model we just created.
+
+```{r}
+library(lmtest)
+library(sandwich)
+coeftest(model2, vcov = vcovHC(model2, "HC1"))
+```
+
+This replicates Stata's `, robust` option with the `reg` command.
+
+### More advanced regression-based models
+
+Just as a side note: Though a lot of what we are probably familiar with was covered above, there are some more complicated models you might come across. Here are some of packages you can utilize to do more advanced analyses:
+
+Package  |  Type of Analysis
+---------|------------------
+*forecast*| time series
+*lavaan* | Structural equation modeling (SEM)
+*lmer*, *lme4* | Multilevel modeling (MLM)
+ *`glm()` function*       | logistic, poisson, etc. regressions
+*MASS*   | negative binomial regression
+        
+        
+      
+        
+## Computing correlations tables: Our segue into visualization {#corr}
+
+Along with other statistical analyses, we can easily compute covariances or correlations between two variables. Let's say we are interested in the correlation between gas mileage (`mpg`) and horsepower (`hp`)--the basic code for these operations is simple:
+        
+```{r}
+
+cov(d$mpg, d$hp) # covariance
+cor(d$mpg, d$hp) # correlation
+
+```
+
+We can also look at correlations between all variables in the data frame by inputing the data frame `d` into the function instead of an `x` and `y` variable. Here, we also get a correlation table for only a restricted amount of variables in `d`.
+
+```{r}
+cor(d)
+
+cor(d[, c(1,2,3,4,5,6,7)]) #this will give you corrletions from the first 7 columns of d
+cor(d[, 1:7]) #a different way to write the same code
+cor(d[-c(10:12)])
+
+#dplyr way
+d %>% select(1:7) %>% cor
+
+d %>% select(-c(gear:foreign)) %>% cor # this selects "everything BUT columns gear through foreign"
+
+```
+
+Now let's do a couple more things to make that output a bit more palettable. `round()` rounds all of the decimal points in the output (in this case, to the second integer), and `upper[upper.tri(res)] <- ""` says, "Take the upper triangle of the matrix `res` and replace it with nothing". In this way, we get less lengthy numbers and we take out redundant information in the matrix. Then, we use `as.data.frame()` to make the correlation matrix into a data frame that we can easily call to look at.
+
+```{r}
+res <- cor(d)
+res <- round(res, 2)
+upper <- res
+upper[upper.tri(res)] <- ""
+res <- as.data.frame(upper)
+
+res
+
+round(cor(d), 2) # another way to do it
+
+```
+
+What if we want to know the p-values of the correlations as well? After all, it doesn't do us much good if the correlations we are interested in aren't significant. The function `rcorr()` within the package *Hmisc* gives us output with both coefficients and p-values.
+
+```{r}
+library(Hmisc)
+
+res1<-rcorr(d$mpg, d$hp)
+
+res2<-rcorr(as.matrix(mtcars[,1:7]))
+
+res2
+
+```
+
+Notice that though we can easily specify correlation between two variables, if we want to use a data frame, to be used with `rcorr()`, it first needs to be transformed into a matrix using the function `as.matrix()`. 
+
+
+We are also able to pick out aspects of the matrices that `rcorr()` produces, in the same way that we call variables from a data frame, using a `$`. Below, `res2$r` calls the Pearson's r correlation matrix, whereas `res2$P` (with a capital P) calls the matrix of p values.
+
+```{r}
+res2$r
+
+res2$P
+```
+
+The functions we've discussed so far are useful in that they can provide us with basic output about correlations between variables. However, if we want to rearrange our output to look at it in different ways, we may need to use **custom functions**. One of the great things about R is that when you can't find a way to do what you want, you can create your own function to do it. 
+
+Below, for example, using the two components we extracted from the `rcorr()` output, we can use a nicely made custom function to represent our correlations in columns, rather than a matrix (source of function found [here](http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software)). The function first requires the coefficient matrix, and second the p-value matrix. This custom function is found in a chunk at the beginning of this Markdown and is yours for the taking.
+
+```{r}
+corr.columns(res2$r, res2$P) # custom function, found above
+```
+
+*Note for custom functions*: Each time you open an R script or Markdown, you will need to run the code for your custom functions once before you can use them. To keep them organized, it is best to keep all custom functions in a chunk at the beginning of your Markdown.
+
+Sometimes, we need to create more organized correlation outputs to present or show our results to others. If you are interested in creating pretty, presentable correlation matrices, we have another custom function here to do the job. Its called `corstars()` and uses the packages *xtable* (for the nice looking table) and *Hmisc* (for the coefficients and p-values). Unlike previous functions we have looked at, this function will give you output with stars to signify the significance of each correlation.
+
+```{r}
+library(xtable)
+
+print(xtable(res), type = "html")
+corstars(d, result = "html")
+```
+
+
+Here are some other cool things you can do with correlations that we won't go into depth here, but wanted to provide for you:
+
+
+`corrplot` returns a visual plot of correlations, with bigger, more significant correlations represented by bigger and darker circles.
+```{r}
+library(corrplot)
+
+res <- cor(d[, 1:7]) # corrplot takes a matrix created by cor(), not the output from rcorr()
+corrplot(res)
+corrplot(res, type = "upper")
+corrplot(res, type = "upper", order = "hclust")
+corrplot(res, type = "upper", sig.level = 0.05)
+corrplot(res, type = "upper", sig.level = 0.001)
+```
+
+Anddddd...if you want to get REALLY intense and are interested in seeing plots, distributions, coefficients, and significance levels all at once, try out `chart.Correlation` from the package *PerformanceAnalytics*...
+
+```{r}
+library(PerformanceAnalytics)
+
+data <- mtcars[, 1:7]
+chart.Correlation(data, histogram = TRUE)
+```
+        
+Amazing.
+
+#Visualization I: Building ggplots
+
+Above, we showed you some basic ways of plotting regression lines using, correlation visuals using and , and interactions using. Here, we go briefly into the visualization powerhouse of R: *ggplot2*.
+
+[ggplot2](http://ggplot2.org/) is a plotting library for R. It is an easy way to create beautiful plots. There are a *ton* of different options, so feel free to explore these with Google as a guide. [Here](http://www.cookbook-r.com/Graphs/) is just one of many helpful websites.
+
+##*ggplots*: How do they work?
+
+Well. The answer is well. 
+
+Wickham and Grolemund (2017), two men behind the madness of *ggplot2*, explain the logic of ggplots in this way:
+
+>    With ggplot2, you begin a plot with the function ggplot(). ggplot() creates a coordinate system that you can add layers to. The first argument of ggplot() is the dataset to use in the graph. So ggplot(data = mpg) creates an empty graph, but it's not very interesting [by itself]. . .
+   You complete your graph by adding one or more layers to ggplot(). The function geom_point(), [for example], adds a layer of points to your plot, which creates a scatterplot. ggplot2 comes with many geom functions that each add a different type of layer to a plot. 
+   Each geom function in ggplot2 takes a mapping argument. This defines how variables in your dataset are mapped to visual properties. The mapping argument is always paired with aes(), and the x and y arguments of aes() specify which variables to map to the x and y axes. ggplot2 looks for the mapped variable in the data argument.
+
+
+Here's what the general form of ggplot then looks like:
+
+    ggplot(data = <DATA>) + 
+     <GEOM_FUNCTION>(mapping = aes(<MAPPINGS>))
+
+Also, for your enjoyment, a list of common aesthetics and geoms are provided at the [end of this Markdown](#aes).
+
+## The basics: Building *ggplots*, layer by layer
+
+```{r}
+d$am <- as.factor(d$am)
+d %>% 
+ggplot() + 
+  geom_smooth(aes(x = mpg, y = wt))
+
+d %>% 
+ggplot() + 
+  geom_smooth(aes(x = mpg, y = wt, linetype = am))
+
+d %>% 
+ggplot(aes(x = mpg, y = wt)) + 
+  geom_smooth(aes(linetype = am)) +
+  geom_point()
+
+d %>% 
+ggplot(aes(x = mpg, y = wt)) + 
+  geom_smooth(aes(linetype = am)) +
+  geom_point(aes(color = am))
+
+d %>% 
+ggplot(aes(x = mpg, y = wt)) + 
+  geom_smooth(aes(linetype = am), color = "black") +
+  geom_point(aes(color = am))
+
+d %>% 
+ggplot(aes(x = mpg, y = wt)) + 
+  geom_smooth(aes(linetype = am), color = "black") +
+  geom_point(aes(color = am)) +
+  coord_cartesian(ylim = c(1, 6))
+
+d %>% 
+ggplot(aes(x = mpg, y = wt)) + 
+  geom_smooth(aes(linetype = am, color = am)) +
+  geom_point(aes(color = am)) +
+  coord_cartesian(ylim = c(1, 6))
+```
+
+
+The complete layers:
+
+    ggplot(data = <DATA>) + 
+     <GEOM_FUNCTION>(
+        mapping = aes(<MAPPINGS>),
+        stat = <STAT>, 
+        position = <POSITION>
+     ) +
+     <COORDINATE_FUNCTION> +
+     <FACET_FUNCTION>
+
+## Visually exploring your data
+
+First, we'll make a couple of our variables into factors so that we can use them more easily:
+
+```{r}
+d %>% mutate(gear = as.factor(gear),
+        am = as.factor(am),
+        foreign = as.factor(foreign),
+        vs = as.factor(vs))
+
+str(d$gear)
+d$gear <- as.factor(d$gear)
+d$am <- as.factor(d$am)
+```
+
+
+You can use bar graphs to look at the distribution of categorical variables:
+
+```{r}
+library(tidyverse)
+ggplot(data = d) +
+  geom_bar(mapping = aes(x = gear))
+
+d %>% count(gear) # see how many are in each group; similar to table for single variable
+
+# to look at distribution of continuous variables
+ggplot(data = d) +
+  geom_histogram(mapping = aes(x = mpg), binwidth = 5) # binwidth sets the size of the intervals for each of your bars. 
+
+hist(d$mpg)
+
+
+#hostogram of categorious broken down by categorical
+
+ggplot(data = d, mapping = aes(x = mpg, colour = gear, y = ..density..)) +
+  geom_freqpoly(binwidth = 5)
+
+# density gives you the percentage under the curve at that point, not the frequency. makes it easier to compare uneven groups
+
+ coord_cartesian(ylim = c(0, 50)) # sets y min and max
+ 
+ggplot(data = d) +
+  geom_histogram(mapping = aes(x = mpg), binwidth = 5) +
+  coord_cartesian(ylim = c(0, 15))
+
+# can also do it this way:
+
+d %>% 
+  ggplot() +
+  geom_histogram(mapping = aes(x = mpg), binwidth = 5) +
+  coord_cartesian(ylim = c(0, 15))
+
+#Basic scatter:
+
+d %>% 
+ggplot(mapping = aes(x = wt, y = mpg)) + 
+  geom_point()
+
+d %>% 
+ggplot() +
+  geom_point(mapping = aes(x = mpg, y = wt))
+
+
+
+
+d %>% 
+  ggplot(mapping = aes(mpg)) + 
+    geom_freqpoly(mapping = aes(colour = wt), binwidth = 1/4)
+
+
+
+#Box plot
+d %>% 
+ggplot(mapping = aes(x = gear, y = mpg)) +
+  geom_boxplot()
+
+d %>% 
+ggplot(mapping = aes(x = carb, y = mpg)) +
+  geom_boxplot() +
+  coord_flip()
+
+#violin plots
+str(d$gear)
+str(d$am)
+
+d$carb <- as.factor(d$carb)
+
+
+#visualize covariation between counts:
+d %>% 
+ggplot() +
+  geom_count(mapping = aes(x = am, y = foreign))
+
+
+
+#Plotting residuals:
+  
+library(modelr)
+
+mod <- lm(log(price) ~ log(carat), data = diamonds)
+
+diamonds2 <- diamonds %>% 
+  add_residuals(mod) %>% 
+  mutate(resid = exp(resid))
+
+ggplot(data = diamonds2) + 
+  geom_point(mapping = aes(x = carat, y = resid))
+
+
+
+# you can rewrite this plot more concisely:
+
+ggplot(data = faithful, mapping = aes(x = eruptions)) + 
+  geom_freqpoly(binwidth = 0.25)
+
+ggplot(faithful, aes(eruptions)) + 
+  geom_freqpoly(binwidth = 0.25)
+
+
+```
+  
+  If you want to add multiple layers with the same variables, specify the variables in the `ggplot()` argument--the first line. If you want to specify different variables for each geom, you can specify variables in each geom argument instead.
+  
+## Visualizing by classes
+  
+```{r}
+d %>% 
+ggplot() + 
+  geom_point(mapping = aes(x = mpg, y = wt, color = am)) # mapping points by am, designating different levels of am with coloe
+
+
+d %>% 
+ggplot() + 
+  geom_point(mapping = aes(x = mpg, y = wt, size = gear)) # mapping points by am, designating different levels of am with size of data points
+
+d %>% 
+ggplot() + 
+  geom_point(mapping = aes(x = mpg, y = wt)) + 
+  facet_wrap(~ gear, nrow = 1)
+
+d %>% 
+ggplot() + 
+  geom_point(mapping = aes(x = mpg, y = wt)) + 
+  facet_wrap(am ~ cyl)
+
+d %>% 
+ggplot() + 
+  geom_point(mapping = aes(x = mpg, y = wt)) + 
+  facet_wrap(. ~ cyl)
+
+
+```
+  
+  
+## Visually presenting your results
+
+Now let's return to our first graph looking at `mpg` and `wt`. *ggplot* makes it easy to make these graphs look really nice and professional. What can we do to prep them for our presentation?
+```{r}
+d %>% 
+ggplot(aes(mpg, wt)) +
+  geom_point(aes(color = am)) +
+  geom_smooth(se = FALSE) +
+  labs(
+    title = "Manual cars tend to be heavier than automatic cars",
+    subtitle = "Car weight and transmission type significantly affect mpg",
+    caption = "Data from fueleconomy.gov"
+  )
+
+
+d %>% 
+ggplot(aes(mpg, wt)) +
+  geom_point(aes(color = am)) +
+  geom_smooth(se = FALSE) +
+  labs(
+    x = "Average Gas Mileage (mpg)",
+    y = "Car Weight (in 1000s)",
+    color = "Transmission Type"
+  )
+
+
+ggplot(mpg, aes(displ, hwy)) +
+  geom_point(aes(colour = class)) +
+  geom_smooth(se = FALSE) +
+  labs(
+    x = "Engine displacement (L)",
+    y = "Highway fuel economy (mpg)",
+    colour = "Car type"
+  )
+
+```
+
+  
+  
+## Wrapping up: Overview of aesthetics and geoms {#aes}  
+
+Aesthetic             |  What It Does
+----------------------|---------------------------------------------------------------------
+`color =`             | Seperates groups by color
+`shape =`             | Seperates groups by shape of obs
+`size =`              | Seperates groups by size of obs
+`alpha =`             | In datasets with many overlapping data points, makes less overlapping obs more transparent and more overlapping obs more solid, in order to see where your data clusters most heavily
+  
+  
+  
+Geom              | What It Does
+------------------|--------------------------------------------------------------------------------
+*Bivariate plots* |
+`geom_point()`    | to plot a scatter of data points
+`geom_smooth()`   | To plot a line with confidence intervals
+`geom_line()`     |
+`geom_bar()`      | To plot a bar graph
+*Descriptive or residual plots* |
+`geom_freqpoly()` | To plot frequencies by class of a variable
+`geom_histogram()`| To plot distribution/frequencie of single variable
+`geom_violin()`   |
+`geom_qq()`       | To plot residuals with a QQ plot
+
+
+# EXTRA: Plotting Data from Repeated Measures Designs: Using Q plots from *ggplot2*
+
+Very basically, we can visualize regression lines with basic within-R functions or ggplot2. `plot` creates a scatter plot of the model, where `abline` then fits a regression line to the model. Note that you need to run both lines of code together.
+
+```{r plot_col_on_income, fig.width=7, fig.height=6}
+plot(mpg~wt, data=d)
+abline(lm(mpg~wt, data=d), col='red')
+
+```
+
+Exploring Repeated Measures Exercise Data
+-----------------------------------------
+
+Here, we'll start by loading in the packages:
+
+```{r load_ggplot_reshape}
+library(ggplot2)
+library(reshape2)
+```
+
+### Exercise data 
+
+Now, we'll load in the data file `exer.csv`. Here, participants (*n* = 30) were randomly assigned to two different diets: low-fat (`diet` = 1) and not low-fat (`diet` = 2), and three different types of exercise: at rest (`exertype` = 1), walking leisurely (`exertype` = 2), and running (`exertype` = 3).  Their pulse rate (`pulse`) was measured at three different time points during their assigned exercise: at 1 minute (`time` = 1), 15 minutes (`time` = 2), and 30 minutes (`time` = 3).  This is a *repeated measures* design, with `time` as the *within-subject* (repeated) variable.  **How does pulse depend on time, diet, and exertype?**
+
+
+```{r load_d2}
+d3 <- read.csv('exer.csv')
+str(d3)
+summary(d3)
+```
+
+We can see that all the variables are integers since the raw data entries began with numbers, even though some should be factors. We want to convert `id`, `diet`, and `exertype` to factors with informative levels:
+
+```{r setfactors_d2}
+d3$diet <- factor(d3$diet, labels=c('lo.fat','non.lo.fat'))
+d3$id <- factor(d3$id)
+d3$exertype <- factor(d3$exertype, labels=c('rest','walk','run'))
+
+summary(d3) # double check formatting
+```
+
+### Plot exercise data 
+Now, we'll use `ggplot2`'s `qplot()` function to plot the subjects' pulse over time points 1-3 for each of the 6 groups (diet type X exercise type):
+
+```{r qplot_tim_on_pulse_facets, fig.width=7, fig.height=10}
+qp3 = qplot(time, pulse, facets = diet ~ exertype, colour = id,
+            geom = "line", data=d3) + 
+      theme_bw() #+ plot.style
+print(qp3)
+```
+
+### Bar graphs 
+
+We might also want to visualize this data in bar graph form. To do this with ggplot, we'll use the `aggregate()` function to get means and standard errors from the data.
+
+First, we'll extract the mean pulses across subjects for each of the 6 groups at all three time points:
+
+```{r means_d3}
+ms <- aggregate(pulse ~ time + diet + exertype, d3, mean)
+ms
+```
+
+Now, we'll get the standard error of the mean. We'll do this using the function `se.mean()` defined in the script 'mc.plots1.r'. The function is elaborated below:
+
+```{r sterr_d3}
+#ms$err = aggregate(pulse ~ time + diet + exertype, d3, 
+                    #FUN = se.mean)$pulse
+
+# This is the same as the function se.mean()
+ms$err = aggregate(pulse ~ time + diet + exertype, d3, 
+                   function(x) {sd(x) / sqrt(length(x))})$pulse
+
+ms
+```
+
+Finally, we plot the bar graph:
+```{r qlot_time_on_pulse_facet_bars, fig.width=7, fig.height=6}
+qp4 <- qplot(time, pulse, facets = . ~ diet, ymin=pulse - err, ymax=pulse + err, 
+  geom=c("pointrange","line"), colour=exertype, data=ms) + 
+	theme_bw() #+ plot.style
+print(qp4)
+```
+
+
+# Review: End Notes
+
+## What's an R Markdown again? {#markdown}
+
+This is the main kind of document that I use in RStudio, and I think its one of the primary advantage of RStudio over base R console. R Markdown allows you to create a file with a mix of R code and regular text, which is useful if you want to have explanations of your code alongside the code itself. This document, for example, is an R Markdown document. It is also useful because you can export your R Markdown file to an html page or a pdf, which comes in handy when you want to share your code or a report of your analyses to someone who doesn't have R. If you're interested in learning more about the functionality of R Markdown, you can visit [this webpage](https://rmarkdown.rstudio.com/lesson-1.html)
+
+R Markdowns use **chunks** to run code. A **chunk** is designated by starting with ``` ```{r}``` and ending with ``` This is where you will write your code. A new chunk can be created by pressing COMMAND + ALT + I on Mac, or CONTROL + ALT + I on PC.
+
+You can run lines of code by highlighting them, and pressing COMMAND + ENTER on Mac, or CONTROL + ENTER on PC. If you want to run a whole chunk of code, you can press COMMAND + ALT + C on Mac, or ALT + CONTROL + ALT + C on PC. Alternatively, you can run a chunk of code by clicking the green right-facing arrow at the top-right corner of each chunk. The downward-facing arrow directly left of the green arrow will run all code up to that point.
+
+## Some useful resources to continue your learning {#resources}
+
+A useful resource, in my opinion, is the [stackoverflow](http://stackoverflow.com/) website. Because this is a general-purpose resource for programming help, it will be useful to use the R tag (`[R]`) in your queries. A related resource is the [statistics stackexchange](http://stats.stackexchange.com/), which is like Stack Overflow but focused more on the underlying statistical issues.
+**Add other resources**
